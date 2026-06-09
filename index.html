@@ -78,6 +78,7 @@
         .copy-btn:disabled {
             background-color: #555;
             cursor: not-allowed;
+            color: #999;
         }
 
         #toast {
@@ -127,23 +128,25 @@
         const urlParams = new URLSearchParams(window.location.search);
         const pastefyId = urlParams.get('id');
 
+        // Nếu có ID thì mới tiến hành lấy dữ liệu
         if (pastefyId) {
-            // Sử dụng Proxy trung chuyển (AllOrigins) để vượt qua lỗi bảo mật CORS
-            const targetUrl = encodeURIComponent(`https://pastefy.app/${pastefyId}/raw`);
-            
-            fetch(`https://api.allorigins.win/raw?url=${targetUrl}`)
+            // Sử dụng API chính thức của Pastefy (Không bị lỗi CORS, cực kỳ ổn định)
+            fetch(`https://pastefy.app/api/v2/paste/${pastefyId}`)
                 .then(res => {
-                    if (!res.ok) throw new Error("Không tìm thấy file");
-                    return res.text();
+                    if (!res.ok) throw new Error("Không tìm thấy ID");
+                    return res.json();
                 })
-                .then(text => {
-                    // Cập nhật tiêu đề
+                .then(data => {
+                    // API Pastefy trả về nội dung ở biến data.paste.content
+                    const text = data.paste.content;
+
+                    // Lấy tiêu đề ở dòng 1
                     const lines = text.split('\n');
                     if (lines[0] && lines[0].trim() !== "") {
                         titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
                     }
 
-                    // Tách lấy pass
+                    // Tách lấy pass ở dòng 2 (sau biểu tượng 👉)
                     const match = text.match(/👉\s*(.*)/);
                     if (match) {
                         actualPassword = match[1].trim();
@@ -153,22 +156,20 @@
                         actualPassword = text.trim();
                     }
 
-                    // Ghi đè mật khẩu thật
+                    // Gán mật khẩu thật (vẫn bị mờ) và MỞ KHÓA nút copy
                     passDisplay.innerText = actualPassword;
-                    copyBtn.disabled = false; // Mở khóa nút copy
+                    copyBtn.disabled = false; 
                 })
                 .catch(err => {
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
-                    passDisplay.innerText = "Không tìm thấy nội dung hoặc ID sai.";
+                    passDisplay.innerText = "ID sai hoặc file không tồn tại.";
                     passDisplay.classList.add('error');
                 });
-        } else {
-            titleDisplay.innerText = "Lỗi: Thiếu ID của Pastefy!";
-            passDisplay.innerText = "Hãy thêm ?id=... vào đường link.";
-            passDisplay.classList.add('error');
-        }
+        } 
+        // Nếu KHÔNG có ID, code sẽ không làm gì cả. 
+        // Giao diện giữ nguyên "apk????" và "xxxxxxxxx", nút copy vẫn khóa.
 
-        // Xử lý nút Copy
+        // Xử lý sự kiện click nút Copy
         copyBtn.addEventListener('click', () => {
             if (!actualPassword) return;
 
