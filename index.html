@@ -135,25 +135,48 @@
         const pastefyId = urlParams.get('id');
 
         if (pastefyId) {
-            titleDisplay.innerText = "Đang tải dữ liệu...";
+            titleDisplay.innerText = "Đang tải dữ liệu siêu tốc...";
             
-            // SỬ DỤNG API CHÍNH THỨC CỦA PASTEFY (Nhanh nhất, không lỗi CORS, lấy được paste Không công khai)
-            const apiUrl = `https://api.pastefy.app/api/v2/paste/${pastefyId}`;
+            const rawUrl = `https://pastefy.app/${pastefyId}/raw`;
 
-            fetch(apiUrl)
-                .then(response => {
-                    if (!response.ok) throw new Error("Không thể kết nối máy chủ Pastefy");
-                    return response.json();
-                })
-                .then(data => {
-                    // Kiểm tra xem paste có tồn tại không
-                    if (!data.exists || !data.paste) {
-                        throw new Error("Paste không tồn tại hoặc đã bị xóa!");
-                    }
-
-                    // Lấy nội dung text từ API
-                    const text = data.paste.content;
+            // Kỹ thuật tải thông minh: Gọi đồng thời 4 trạm cùng lúc
+            // Trạm nào trả kết quả về đầu tiên sẽ được lấy ngay lập tức (Tốc độ tối đa)
+            async function fetchWithValidation(url, isApi = false) {
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error("HTTP Error");
                     
+                    if (isApi) {
+                        const data = await response.json();
+                        if (data && data.paste && data.paste.content) return data.paste.content;
+                        throw new Error("API No Content");
+                    } else {
+                        const text = await response.text();
+                        // Chặn trường hợp proxy trả về trang lỗi HTML thay vì text
+                        if (!text || text.trim() === "" || text.includes("<html") || text.includes("Cloudflare")) {
+                            throw new Error("Invalid Content");
+                        }
+                        return text;
+                    }
+                } catch (e) {
+                    throw e; // Ném lỗi để Promise.any bỏ qua nguồn này và thử nguồn khác
+                }
+            }
+
+            const fetchTasks = [
+                // Ưu tiên 1: AllOrigins RAW (Cực kỳ ổn định cho file Không công khai)
+                fetchWithValidation(`https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`),
+                // Ưu tiên 2: CorsProxy (Tốc độ cực nhanh)
+                fetchWithValidation(`https://corsproxy.io/?${encodeURIComponent(rawUrl)}`),
+                // Ưu tiên 3: CodeTabs Proxy (Dự phòng vững chắc)
+                fetchWithValidation(`https://api.codetabs.com/v1/proxy?quest=${rawUrl}`),
+                // Ưu tiên 4: API chính thức (Dự phòng cho file công khai)
+                fetchWithValidation(`https://api.pastefy.app/api/v2/paste/${pastefyId}`, true)
+            ];
+
+            // Chạy đua (Race) 4 nguồn tải cùng lúc để lấy kết quả nhanh nhất
+            Promise.any(fetchTasks)
+                .then(text => {
                     // Tách file thành từng dòng để xử lý
                     const lines = text.split('\n');
                     
@@ -178,10 +201,10 @@
                     copyBtn.innerText = "Copy Password";
                 })
                 .catch(err => {
-                    // Hiển thị lỗi rõ ràng
-                    console.error(err);
+                    // Chỉ báo lỗi nếu TẤT CẢ các nguồn đều sập/thất bại
+                    console.error("Tất cả máy chủ đều không tải được", err);
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
-                    passDisplay.innerText = "Sai ID hoặc Paste bị khóa riêng tư.";
+                    passDisplay.innerText = "Sai ID hoặc Paste đã bị xóa.";
                     passDisplay.classList.add('error');
                     copyBtn.innerText = "Lỗi";
                 });
