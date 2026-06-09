@@ -52,7 +52,6 @@
             user-select: text; 
         }
 
-        /* Lớp hiển thị khi có lỗi không lấy được ID */
         .password.error {
             filter: blur(0);
             color: #f44336;
@@ -125,25 +124,26 @@
         
         let actualPassword = "";
 
-        // Lấy ID từ trên thanh địa chỉ (URL)
         const urlParams = new URLSearchParams(window.location.search);
         const pastefyId = urlParams.get('id');
 
         if (pastefyId) {
-            // Lấy dữ liệu từ Pastefy nếu có ID
-            fetch(`https://pastefy.app/${pastefyId}/raw`)
+            // Sử dụng Proxy trung chuyển (AllOrigins) để vượt qua lỗi bảo mật CORS
+            const targetUrl = encodeURIComponent(`https://pastefy.app/${pastefyId}/raw`);
+            
+            fetch(`https://api.allorigins.win/raw?url=${targetUrl}`)
                 .then(res => {
                     if (!res.ok) throw new Error("Không tìm thấy file");
                     return res.text();
                 })
                 .then(text => {
-                    // Cập nhật tiêu đề (lấy dòng đầu tiên nếu có)
+                    // Cập nhật tiêu đề
                     const lines = text.split('\n');
-                    if (lines[0].trim() !== "") {
+                    if (lines[0] && lines[0].trim() !== "") {
                         titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
                     }
 
-                    // Tách lấy pass ở dòng 2 (sau biểu tượng 👉 hoặc nội dung dòng 2)
+                    // Tách lấy pass
                     const match = text.match(/👉\s*(.*)/);
                     if (match) {
                         actualPassword = match[1].trim();
@@ -153,7 +153,7 @@
                         actualPassword = text.trim();
                     }
 
-                    // Ghi đè chữ "xxxxxxxxx" bằng mật khẩu thật (nhưng vẫn đang bị mờ)
+                    // Ghi đè mật khẩu thật
                     passDisplay.innerText = actualPassword;
                     copyBtn.disabled = false; // Mở khóa nút copy
                 })
@@ -163,14 +163,12 @@
                     passDisplay.classList.add('error');
                 });
         } else {
-            // Nếu người dùng chỉ vào link trang chủ mà không có ?id=
-            // Giữ nguyên giao diện apk???? và xxxxxxxxx, nhưng báo lỗi nút copy
             titleDisplay.innerText = "Lỗi: Thiếu ID của Pastefy!";
             passDisplay.innerText = "Hãy thêm ?id=... vào đường link.";
             passDisplay.classList.add('error');
         }
 
-        // Xử lý sự kiện click nút Copy
+        // Xử lý nút Copy
         copyBtn.addEventListener('click', () => {
             if (!actualPassword) return;
 
