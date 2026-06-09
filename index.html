@@ -125,28 +125,52 @@
         
         let actualPassword = "";
 
+        // Lấy ID từ trên thanh địa chỉ (URL)
         const urlParams = new URLSearchParams(window.location.search);
         const pastefyId = urlParams.get('id');
 
-        // Nếu có ID thì mới tiến hành lấy dữ liệu
         if (pastefyId) {
-            // Sử dụng API chính thức của Pastefy (Không bị lỗi CORS, cực kỳ ổn định)
-            fetch(`https://pastefy.app/api/v2/paste/${pastefyId}`)
-                .then(res => {
-                    if (!res.ok) throw new Error("Không tìm thấy ID");
-                    return res.json();
-                })
-                .then(data => {
-                    // API Pastefy trả về nội dung ở biến data.paste.content
-                    const text = data.paste.content;
+            // Lấy link nội dung thô (raw) của file Pastefy
+            const rawUrl = `https://pastefy.app/${pastefyId}/raw`;
+            
+            // Khai báo 2 trạm trung chuyển cực mạnh để vượt rào bảo mật (CORS)
+            const proxy1 = `https://api.codetabs.com/v1/proxy?quest=${rawUrl}`;
+            const proxy2 = `https://api.allorigins.win/get?url=${encodeURIComponent(rawUrl)}`;
 
-                    // Lấy tiêu đề ở dòng 1
+            // Hàm bọc tự động thử tải bằng 2 cách
+            async function fetchPasteData() {
+                try {
+                    // Cách 1: Thử trạm CodeTabs (Nhanh, trả về văn bản gốc)
+                    let res1 = await fetch(proxy1);
+                    if (res1.ok) {
+                        return await res1.text();
+                    }
+                } catch (e) {
+                    console.log("Trạm 1 bị chặn, tự động chuyển sang trạm 2...");
+                }
+
+                // Cách 2: Trạm AllOrigins kiểu JSON (Bao bọc an toàn, trình duyệt không thể chặn)
+                let res2 = await fetch(proxy2);
+                if (!res2.ok) throw new Error("Cả 2 proxy đều lỗi");
+                
+                let data2 = await res2.json();
+                if (!data2.contents) throw new Error("Nội dung rỗng hoặc ID sai");
+                
+                return data2.contents;
+            }
+
+            // Tiến hành tải nội dung
+            fetchPasteData()
+                .then(text => {
+                    // Tách file thành từng dòng
                     const lines = text.split('\n');
+                    
+                    // Xử lý dòng 1 làm tiêu đề
                     if (lines[0] && lines[0].trim() !== "") {
                         titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
                     }
 
-                    // Tách lấy pass ở dòng 2 (sau biểu tượng 👉)
+                    // Tách lấy mật khẩu (Hỗ trợ bắt pass có biểu tượng 👉 hoặc nội dung dòng 2)
                     const match = text.match(/👉\s*(.*)/);
                     if (match) {
                         actualPassword = match[1].trim();
@@ -156,18 +180,18 @@
                         actualPassword = text.trim();
                     }
 
-                    // Gán mật khẩu thật (vẫn bị mờ) và MỞ KHÓA nút copy
+                    // Đưa nội dung thật lên web và MỞ KHÓA nút Copy
                     passDisplay.innerText = actualPassword;
                     copyBtn.disabled = false; 
                 })
                 .catch(err => {
+                    // Hiển thị lỗi rõ ràng nếu nhập sai link
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
-                    passDisplay.innerText = "ID sai hoặc file không tồn tại.";
+                    passDisplay.innerText = "Sai ID hoặc Pastefy bị lỗi.";
                     passDisplay.classList.add('error');
                 });
-        } 
-        // Nếu KHÔNG có ID, code sẽ không làm gì cả. 
-        // Giao diện giữ nguyên "apk????" và "xxxxxxxxx", nút copy vẫn khóa.
+        }
+        // Nếu trang không có ?id=... thì kịch bản nằm im, hiển thị đúng "apk????" và "xxxxxxxxx", nút copy khóa cứng.
 
         // Xử lý sự kiện click nút Copy
         copyBtn.addEventListener('click', () => {
@@ -182,7 +206,7 @@
                     toast.classList.remove('show');
                 }, 2000);
             }).catch(err => {
-                alert('Không thể copy, vui lòng thử lại!');
+                alert('Trình duyệt của bạn đang chặn copy, vui lòng thử lại!');
             });
         });
     </script>
