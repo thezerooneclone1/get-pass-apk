@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Get Password</title>
+    <style>
+        /* Giao diện nền tối xám */
+        body {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        /* Khung chứa nội dung */
+        .container {
+            background-color: #2d2d2d;
+            padding: 30px 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        /* Dòng 1: Tiêu đề */
+        .title {
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            color: #a0a0a0;
+        }
+
+        /* Dòng 2: Text bị làm mờ */
+        .password {
+            font-size: 1.2rem;
+            font-weight: bold;
+            background-color: #181818;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            letter-spacing: 1px;
+            color: #4CAF50;
+            word-break: break-all;
+            /* Hiệu ứng mờ */
+            filter: blur(6px);
+            transition: filter 0.3s ease;
+            user-select: none; /* Không cho bôi đen khi đang mờ */
+        }
+
+        /* Lớp CSS khi bỏ làm mờ */
+        .password.unblurred {
+            filter: blur(0);
+            user-select: text; 
+        }
+
+        /* Dòng 3: Nút Copy */
+        .copy-btn {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            width: 100%;
+            font-weight: bold;
+        }
+
+        .copy-btn:hover {
+            background-color: #005f9e;
+        }
+
+        /* Thông báo "Đã copy" (Toast) */
+        #toast {
+            visibility: hidden;
+            min-width: 200px;
+            background-color: #4CAF50;
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 12px;
+            position: fixed;
+            z-index: 1;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s, bottom 0.3s;
+            font-weight: bold;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        #toast.show {
+            visibility: visible;
+            opacity: 1;
+            bottom: 50px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="title">Đây là pass của apk332.txt</div>
+        <div class="password" id="pass-display">VGUr75x5Vvop0xEjJzQZMMkVaPJrhn6US9ftvVbU</div>
+        <button class="copy-btn" id="copy-btn">Copy Password</button>
+    </div>
+
+    <div id="toast">Đã copy!</div>
+
+    <script>
+        const passDisplay = document.getElementById('pass-display');
+        const copyBtn = document.getElementById('copy-btn');
+        const toast = document.getElementById('toast');
+        
+        // Mật khẩu mặc định
+        let actualPassword = "VGUr75x5Vvop0xEjJzQZMMkVaPJrhn6US9ftvVbU";
+
+        /* ========================================================
+        CÁCH LẤY NỘI DUNG TỪ PASTEFY:
+        Nếu bạn muốn tự động lấy nội dung từ một link Pastefy mới nhất.
+        Hãy bỏ dấu comment (/* và * /) ở đoạn code dưới đây và thay "ID_CUA_BAN"
+        bằng ID dán (paste) trên Pastefy của bạn.
+        ========================================================
+        */
+        
+        /*
+        const pastefyId = 'ID_CUA_BAN'; // VD: link là pastefy.app/abc1234 thì ID là abc1234
+        fetch(`https://pastefy.app/${pastefyId}/raw`)
+            .then(res => res.text())
+            .then(text => {
+                // Tách lấy pass sau biểu tượng 👉 nếu file có định dạng như bạn ví dụ
+                const match = text.match(/👉\s*(.*)/);
+                if(match) {
+                    actualPassword = match[1].trim();
+                    passDisplay.innerText = actualPassword;
+                } else {
+                    actualPassword = text.trim();
+                    passDisplay.innerText = actualPassword;
+                }
+            })
+            .catch(err => console.error('Lỗi lấy dữ liệu từ Pastefy:', err));
+        */
+
+        // Xử lý sự kiện click nút Copy
+        copyBtn.addEventListener('click', () => {
+            // Lưu vào Clipboard
+            navigator.clipboard.writeText(actualPassword).then(() => {
+                
+                // 1. Bỏ làm mờ password
+                passDisplay.classList.add('unblurred');
+                
+                // 2. Hiện thông báo Toast
+                toast.classList.add('show');
+                
+                // 3. Đợi 2 giây (2000ms) sau đó làm mờ lại và ẩn thông báo
+                setTimeout(() => {
+                    passDisplay.classList.remove('unblurred');
+                    toast.classList.remove('show');
+                }, 2000);
+
+            }).catch(err => {
+                alert('Không thể copy, vui lòng thử lại!');
+            });
+        });
+    </script>
+</body>
+</html>
