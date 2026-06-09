@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Get Password</title>
+    <title>Get Password Fast</title>
     <style>
         body {
             background-color: #1e1e1e;
@@ -30,6 +30,7 @@
             font-size: 1.1rem;
             margin-bottom: 20px;
             color: #a0a0a0;
+            word-wrap: break-word;
         }
 
         .password {
@@ -71,7 +72,7 @@
             font-weight: bold;
         }
 
-        .copy-btn:hover {
+        .copy-btn:hover:not(:disabled) {
             background-color: #005f9e;
         }
         
@@ -100,6 +101,10 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
         }
 
+        #toast.error {
+            background-color: #f44336;
+        }
+
         #toast.show {
             visibility: visible;
             opacity: 1;
@@ -125,44 +130,31 @@
         
         let actualPassword = "";
 
-        // Lấy ID từ trên thanh địa chỉ (URL)
+        // Lấy ID từ URL
         const urlParams = new URLSearchParams(window.location.search);
         const pastefyId = urlParams.get('id');
 
         if (pastefyId) {
-            // Lấy link nội dung thô (raw) của file Pastefy
-            const rawUrl = `https://pastefy.app/${pastefyId}/raw`;
+            titleDisplay.innerText = "Đang tải dữ liệu...";
             
-            // Khai báo 2 trạm trung chuyển cực mạnh để vượt rào bảo mật (CORS)
-            const proxy1 = `https://api.codetabs.com/v1/proxy?quest=${rawUrl}`;
-            const proxy2 = `https://api.allorigins.win/get?url=${encodeURIComponent(rawUrl)}`;
+            // SỬ DỤNG API CHÍNH THỨC CỦA PASTEFY (Nhanh nhất, không lỗi CORS, lấy được paste Không công khai)
+            const apiUrl = `https://api.pastefy.app/api/v2/paste/${pastefyId}`;
 
-            // Hàm bọc tự động thử tải bằng 2 cách
-            async function fetchPasteData() {
-                try {
-                    // Cách 1: Thử trạm CodeTabs (Nhanh, trả về văn bản gốc)
-                    let res1 = await fetch(proxy1);
-                    if (res1.ok) {
-                        return await res1.text();
+            fetch(apiUrl)
+                .then(response => {
+                    if (!response.ok) throw new Error("Không thể kết nối máy chủ Pastefy");
+                    return response.json();
+                })
+                .then(data => {
+                    // Kiểm tra xem paste có tồn tại không
+                    if (!data.exists || !data.paste) {
+                        throw new Error("Paste không tồn tại hoặc đã bị xóa!");
                     }
-                } catch (e) {
-                    console.log("Trạm 1 bị chặn, tự động chuyển sang trạm 2...");
-                }
 
-                // Cách 2: Trạm AllOrigins kiểu JSON (Bao bọc an toàn, trình duyệt không thể chặn)
-                let res2 = await fetch(proxy2);
-                if (!res2.ok) throw new Error("Cả 2 proxy đều lỗi");
-                
-                let data2 = await res2.json();
-                if (!data2.contents) throw new Error("Nội dung rỗng hoặc ID sai");
-                
-                return data2.contents;
-            }
-
-            // Tiến hành tải nội dung
-            fetchPasteData()
-                .then(text => {
-                    // Tách file thành từng dòng
+                    // Lấy nội dung text từ API
+                    const text = data.paste.content;
+                    
+                    // Tách file thành từng dòng để xử lý
                     const lines = text.split('\n');
                     
                     // Xử lý dòng 1 làm tiêu đề
@@ -183,31 +175,61 @@
                     // Đưa nội dung thật lên web và MỞ KHÓA nút Copy
                     passDisplay.innerText = actualPassword;
                     copyBtn.disabled = false; 
+                    copyBtn.innerText = "Copy Password";
                 })
                 .catch(err => {
-                    // Hiển thị lỗi rõ ràng nếu nhập sai link
+                    // Hiển thị lỗi rõ ràng
+                    console.error(err);
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
-                    passDisplay.innerText = "Sai ID hoặc Pastefy bị lỗi.";
+                    passDisplay.innerText = "Sai ID hoặc Paste bị khóa riêng tư.";
                     passDisplay.classList.add('error');
+                    copyBtn.innerText = "Lỗi";
                 });
         }
-        // Nếu trang không có ?id=... thì kịch bản nằm im, hiển thị đúng "apk????" và "xxxxxxxxx", nút copy khóa cứng.
 
-        // Xử lý sự kiện click nút Copy
+        // Xử lý sự kiện click nút Copy (Sử dụng cách tương thích cao nhất)
         copyBtn.addEventListener('click', () => {
             if (!actualPassword) return;
 
-            navigator.clipboard.writeText(actualPassword).then(() => {
-                passDisplay.classList.add('unblurred');
+            // Tạo một thẻ textarea ẩn để copy (Tránh lỗi trên Iframe/Trình duyệt cũ)
+            const textArea = document.createElement("textarea");
+            textArea.value = actualPassword;
+            // Đặt vị trí ẩn để không làm nhảy trang web
+            textArea.style.position = "fixed";
+            textArea.style.top = "-9999px";
+            document.body.appendChild(textArea);
+            
+            textArea.focus();
+            textArea.select();
+
+            try {
+                // Thực thi lệnh copy
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    passDisplay.classList.add('unblurred');
+                    toast.innerText = "Đã copy thành công!";
+                    toast.classList.remove('error');
+                    toast.classList.add('show');
+                    
+                    setTimeout(() => {
+                        passDisplay.classList.remove('unblurred');
+                        toast.classList.remove('show');
+                    }, 2000);
+                } else {
+                    throw new Error("Trình duyệt từ chối copy");
+                }
+            } catch (err) {
+                // Xử lý lỗi thay vì dùng alert()
+                toast.innerText = "Trình duyệt chặn copy!";
+                toast.classList.add('error');
                 toast.classList.add('show');
-                
                 setTimeout(() => {
-                    passDisplay.classList.remove('unblurred');
                     toast.classList.remove('show');
-                }, 2000);
-            }).catch(err => {
-                alert('Trình duyệt của bạn đang chặn copy, vui lòng thử lại!');
-            });
+                }, 3000);
+            }
+            
+            // Xóa thẻ tạm
+            document.body.removeChild(textArea);
         });
     </script>
 </body>
