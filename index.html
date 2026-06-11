@@ -137,13 +137,16 @@
         if (pastefyId) {
             titleDisplay.innerText = "Đang tải dữ liệu siêu tốc...";
             
-            const rawUrl = `https://pastefy.app/${pastefyId}/raw`;
+            // TẠO BIẾN THỜI GIAN ĐỂ PHÁ CACHE (CACHE BUSTING)
+            // Mỗi lần F5 sẽ sinh ra một chuỗi số mới, buộc proxy phải lấy dữ liệu mới nhất
+            const timeStamp = new Date().getTime(); 
+            const rawUrl = `https://pastefy.app/${pastefyId}/raw?t=${timeStamp}`;
 
             // Kỹ thuật tải thông minh: Gọi đồng thời 4 trạm cùng lúc
-            // Trạm nào trả kết quả về đầu tiên sẽ được lấy ngay lập tức (Tốc độ tối đa)
             async function fetchWithValidation(url, isApi = false) {
                 try {
-                    const response = await fetch(url);
+                    // Thêm cache: 'no-store' để cấm trình duyệt lưu cache
+                    const response = await fetch(url, { cache: 'no-store' });
                     if (!response.ok) throw new Error("HTTP Error");
                     
                     if (isApi) {
@@ -164,14 +167,14 @@
             }
 
             const fetchTasks = [
-                // Ưu tiên 1: AllOrigins RAW (Cực kỳ ổn định cho file Không công khai)
-                fetchWithValidation(`https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`),
-                // Ưu tiên 2: CorsProxy (Tốc độ cực nhanh)
-                fetchWithValidation(`https://corsproxy.io/?${encodeURIComponent(rawUrl)}`),
-                // Ưu tiên 3: CodeTabs Proxy (Dự phòng vững chắc)
-                fetchWithValidation(`https://api.codetabs.com/v1/proxy?quest=${rawUrl}`),
-                // Ưu tiên 4: API chính thức (Dự phòng cho file công khai)
-                fetchWithValidation(`https://api.pastefy.app/api/v2/paste/${pastefyId}`, true)
+                // Ưu tiên 1: AllOrigins RAW (Thêm tham số _nc để phá cache proxy)
+                fetchWithValidation(`https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}&_nc=${timeStamp}`),
+                // Ưu tiên 2: CorsProxy
+                fetchWithValidation(`https://corsproxy.io/?${encodeURIComponent(rawUrl)}&_nc=${timeStamp}`),
+                // Ưu tiên 3: CodeTabs Proxy 
+                fetchWithValidation(`https://api.codetabs.com/v1/proxy?quest=${rawUrl}&_nc=${timeStamp}`),
+                // Ưu tiên 4: API chính thức 
+                fetchWithValidation(`https://api.pastefy.app/api/v2/paste/${pastefyId}?_nc=${timeStamp}`, true)
             ];
 
             // Chạy đua (Race) 4 nguồn tải cùng lúc để lấy kết quả nhanh nhất
