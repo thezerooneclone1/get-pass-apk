@@ -136,81 +136,114 @@
 
         if (pastefyId) {
             titleDisplay.innerText = "Đang tải dữ liệu siêu tốc...";
-            
-            // TẠO BIẾN THỜI GIAN ĐỂ PHÁ CACHE (CACHE BUSTING)
-            // Mỗi lần F5 sẽ sinh ra một chuỗi số mới, buộc proxy phải lấy dữ liệu mới nhất
-            const timeStamp = new Date().getTime(); 
-            const rawUrl = `https://pastefy.app/${pastefyId}/raw?t=${timeStamp}`;
 
-            // Kỹ thuật tải thông minh: Gọi đồng thời 4 trạm cùng lúc
-            async function fetchWithValidation(url, isApi = false) {
+            // Sinh nonce ngẫu nhiên + timestamp -> chống trùng cache key ở phía proxy
+            // (chỉ dùng timestamp có thể bị proxy chuẩn hoá/trùng giây)
+            function cacheBuster() {
+                return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+            }
+
+            async function fetchWithValidation(url, isApi = false, timeoutMs = 6000) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeoutMs);
                 try {
-                    // Thêm cache: 'no-store' để cấm trình duyệt lưu cache
-                    const response = await fetch(url, { cache: 'no-store' });
-                    if (!response.ok) throw new Error("HTTP Error");
-                    
+                    const response = await fetch(url, {
+                        cache: 'no-store',
+                        signal: controller.signal
+                    });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
                     if (isApi) {
                         const data = await response.json();
-                        if (data && data.paste && data.paste.content) return data.paste.content;
-                        throw new Error("API No Content");
+                        if (data && data.paste && typeof data.paste.content === 'string' && data.paste.content.length > 0) {
+                            return data.paste.content;
+                        }
+                        throw new Error("API: không có nội dung");
                     } else {
                         const text = await response.text();
-                        // Chặn trường hợp proxy trả về trang lỗi HTML thay vì text
-                        if (!text || text.trim() === "" || text.includes("<html") || text.includes("Cloudflare")) {
-                            throw new Error("Invalid Content");
+                        const trimmed = text.trim();
+                        // Chặn trường hợp proxy trả về trang lỗi/HTML/Cloudflare thay vì raw text
+                        if (!trimmed || trimmed.startsWith("<") || trimmed.includes("Cloudflare")) {
+                            throw new Error("Nội dung không hợp lệ từ proxy");
                         }
                         return text;
                     }
-                } catch (e) {
-                    throw e; // Ném lỗi để Promise.any bỏ qua nguồn này và thử nguồn khác
+                } finally {
+                    clearTimeout(timer);
                 }
             }
 
-            const fetchTasks = [
-                // Ưu tiên 1: AllOrigins RAW (Thêm tham số _nc để phá cache proxy)
-                fetchWithValidation(`https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}&_nc=${timeStamp}`),
-                // Ưu tiên 2: CorsProxy
-                fetchWithValidation(`https://corsproxy.io/?${encodeURIComponent(rawUrl)}&_nc=${timeStamp}`),
-                // Ưu tiên 3: CodeTabs Proxy 
-                fetchWithValidation(`https://api.codetabs.com/v1/proxy?quest=${rawUrl}&_nc=${timeStamp}`),
-                // Ưu tiên 4: API chính thức 
-                fetchWithValidation(`https://api.pastefy.app/api/v2/paste/${pastefyId}?_nc=${timeStamp}`, true)
-            ];
+            // QUAN TRỌNG: gọi TUẦN TỰ theo thứ tự ưu tiên, KHÔNG dùng Promise.any/race.
+            // Lý do bug cũ: race lấy kết quả VỀ NHANH NHẤT, không phải MỚI NHẤT.
+            // Các proxy free (allorigins/corsproxy/codetabs) hay tự cache theo URL đích ở
+            // server của họ -> proxy nào đang có bản cache cũ luôn trả lời nhanh nhất và
+            // "thắng" cuộc đua, nên trang cứ hiện pass cũ dù Pastefy đã đổi.
+            // Ưu tiên API gốc của Pastefy trước tiên vì đó là nguồn gốc, không qua cache trung gian.
+            async function buildSources() {
+                const nonce = cacheBuster();
+                const rawUrl = `https://pastefy.app/${pastefyId}/raw?nocache=${nonce}`;
+                return [
+                    { url: `https://api.pastefy.app/api/v2/paste/${pastefyId}?nocache=${nonce}`, isApi: true },
+                    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false },
+                    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false },
+                    { url: `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false }
+                ];
+            }
 
-            // Chạy đua (Race) 4 nguồn tải cùng lúc để lấy kết quả nhanh nhất
-            Promise.any(fetchTasks)
-                .then(text => {
-                    // Tách file thành từng dòng để xử lý
-                    const lines = text.split('\n');
-                    
-                    // Xử lý dòng 1 làm tiêu đề
-                    if (lines[0] && lines[0].trim() !== "") {
-                        titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
+            async function fetchSequential(sources) {
+                let lastErr = null;
+                for (const src of sources) {
+                    try {
+                        return await fetchWithValidation(src.url, src.isApi);
+                    } catch (e) {
+                        lastErr = e; // thử nguồn kế tiếp
                     }
+                }
+                throw lastErr || new Error("Tất cả nguồn đều thất bại");
+            }
 
-                    // Tách lấy mật khẩu (Hỗ trợ bắt pass có biểu tượng 👉 hoặc nội dung dòng 2)
-                    const match = text.match(/👉\s*(.*)/);
-                    if (match) {
-                        actualPassword = match[1].trim();
-                    } else if (lines.length > 1) {
-                        actualPassword = lines[1].trim();
-                    } else {
-                        actualPassword = text.trim();
+            function applyPaste(text) {
+                const lines = text.split('\n');
+
+                if (lines[0] && lines[0].trim() !== "") {
+                    titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
+                }
+
+                const match = text.match(/👉\s*(.*)/);
+                if (match) {
+                    actualPassword = match[1].trim();
+                } else if (lines.length > 1) {
+                    actualPassword = lines[1].trim();
+                } else {
+                    actualPassword = text.trim();
+                }
+
+                passDisplay.innerText = actualPassword;
+                copyBtn.disabled = false;
+                copyBtn.innerText = "Copy Password";
+            }
+
+            async function loadPaste(attempt = 1) {
+                const maxAttempts = 3;
+                try {
+                    const sources = await buildSources();
+                    const text = await fetchSequential(sources);
+                    applyPaste(text);
+                } catch (err) {
+                    // Retry để tránh báo nhầm "đã bị xóa" khi chỉ là lỗi mạng/proxy tạm thời
+                    if (attempt < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 500 * attempt));
+                        return loadPaste(attempt + 1);
                     }
-
-                    // Đưa nội dung thật lên web và MỞ KHÓA nút Copy
-                    passDisplay.innerText = actualPassword;
-                    copyBtn.disabled = false; 
-                    copyBtn.innerText = "Copy Password";
-                })
-                .catch(err => {
-                    // Chỉ báo lỗi nếu TẤT CẢ các nguồn đều sập/thất bại
                     console.error("Tất cả máy chủ đều không tải được", err);
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
                     passDisplay.innerText = "Sai ID hoặc Paste đã bị xóa.";
                     passDisplay.classList.add('error');
                     copyBtn.innerText = "Lỗi";
-                });
+                }
+            }
+
+            loadPaste();
         }
 
         // Xử lý sự kiện click nút Copy (Sử dụng cách tương thích cao nhất)
