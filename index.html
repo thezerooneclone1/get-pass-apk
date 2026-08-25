@@ -130,130 +130,105 @@
         
         let actualPassword = "";
 
-        // Lấy ID từ URL
         const urlParams = new URLSearchParams(window.location.search);
         const pastefyId = urlParams.get('id');
 
         if (pastefyId) {
-            titleDisplay.innerText = "Đang tải dữ liệu siêu tốc...";
+            titleDisplay.innerText = "Đang tải dữ liệu...";
+            const timeStamp = Date.now(); 
 
-            // Sinh nonce ngẫu nhiên + timestamp -> chống trùng cache key ở phía proxy
-            // (chỉ dùng timestamp có thể bị proxy chuẩn hoá/trùng giây)
-            function cacheBuster() {
-                return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-            }
-
-            async function fetchWithValidation(url, isApi = false, timeoutMs = 6000) {
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), timeoutMs);
-                try {
-                    const response = await fetch(url, {
-                        cache: 'no-store',
-                        signal: controller.signal
-                    });
-                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-                    if (isApi) {
-                        const data = await response.json();
-                        if (data && data.paste && typeof data.paste.content === 'string' && data.paste.content.length > 0) {
-                            return data.paste.content;
-                        }
-                        throw new Error("API: không có nội dung");
-                    } else {
-                        const text = await response.text();
-                        const trimmed = text.trim();
-                        // Chặn trường hợp proxy trả về trang lỗi/HTML/Cloudflare thay vì raw text
-                        if (!trimmed || trimmed.startsWith("<") || trimmed.includes("Cloudflare")) {
-                            throw new Error("Nội dung không hợp lệ từ proxy");
-                        }
-                        return text;
-                    }
-                } finally {
-                    clearTimeout(timer);
+            // 1. Lấy dữ liệu trực tiếp qua Pastefy API (Nhanh nhất & Đúng nhất)
+            async function fetchDirectApi() {
+                const response = await fetch(`https://api.pastefy.app/api/v2/paste/${pastefyId}?_nc=${timeStamp}`, {
+                    cache: 'no-store',
+                    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+                });
+                if (!response.ok) throw new Error("API Direct Failed");
+                const data = await response.json();
+                if (data && data.paste && data.paste.content) {
+                    return data.paste.content;
                 }
+                throw new Error("API No Content");
             }
 
-            // QUAN TRỌNG: gọi TUẦN TỰ theo thứ tự ưu tiên, KHÔNG dùng Promise.any/race.
-            // Lý do bug cũ: race lấy kết quả VỀ NHANH NHẤT, không phải MỚI NHẤT.
-            // Các proxy free (allorigins/corsproxy/codetabs) hay tự cache theo URL đích ở
-            // server của họ -> proxy nào đang có bản cache cũ luôn trả lời nhanh nhất và
-            // "thắng" cuộc đua, nên trang cứ hiện pass cũ dù Pastefy đã đổi.
-            // Ưu tiên API gốc của Pastefy trước tiên vì đó là nguồn gốc, không qua cache trung gian.
-            async function buildSources() {
-                const nonce = cacheBuster();
-                const rawUrl = `https://pastefy.app/${pastefyId}/raw?nocache=${nonce}`;
-                return [
-                    { url: `https://api.pastefy.app/api/v2/paste/${pastefyId}?nocache=${nonce}`, isApi: true },
-                    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false },
-                    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false },
-                    { url: `https://corsproxy.io/?url=${encodeURIComponent(rawUrl)}&_nc=${nonce}`, isApi: false }
-                ];
+            // 2. Lấy dữ liệu RAW trực tiếp từ Pastefy
+            async function fetchDirectRaw() {
+                const response = await fetch(`https://pastefy.app/${pastefyId}/raw?_nc=${timeStamp}`, {
+                    cache: 'no-store',
+                    headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+                });
+                if (!response.ok) throw new Error("RAW Direct Failed");
+                const text = await response.text();
+                if (!text || text.trim() === "" || text.includes("<html") || text.includes("Cloudflare")) {
+                    throw new Error("RAW Direct Invalid Content");
+                }
+                return text;
             }
 
-            async function fetchSequential(sources) {
-                let lastErr = null;
-                for (const src of sources) {
+            // 3. Dự phòng qua Proxy sạch (chỉ dùng khi gọi trực tiếp bị chặn)
+            async function fetchViaProxy(proxyUrl) {
+                const response = await fetch(proxyUrl, { cache: 'no-store' });
+                if (!response.ok) throw new Error("Proxy Error");
+                const text = await response.text();
+                if (!text || text.trim() === "" || text.includes("<html") || text.includes("Cloudflare")) {
+                    throw new Error("Proxy Invalid Content");
+                }
+                return text;
+            }
+
+            // Tiến trình xử lý theo thứ tự ưu tiên
+            async function loadData() {
+                try {
+                    return await fetchDirectApi();
+                } catch (e1) {
                     try {
-                        return await fetchWithValidation(src.url, src.isApi);
-                    } catch (e) {
-                        lastErr = e; // thử nguồn kế tiếp
+                        return await fetchDirectRaw();
+                    } catch (e2) {
+                        const rawUrl = `https://pastefy.app/${pastefyId}/raw?_nc=${timeStamp}`;
+                        const proxies = [
+                            `https://corsproxy.io/?${encodeURIComponent(rawUrl)}`,
+                            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(rawUrl)}`
+                        ];
+                        return await Promise.any(proxies.map(p => fetchViaProxy(p)));
                     }
                 }
-                throw lastErr || new Error("Tất cả nguồn đều thất bại");
             }
 
-            function applyPaste(text) {
-                const lines = text.split('\n');
-
-                if (lines[0] && lines[0].trim() !== "") {
-                    titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
-                }
-
-                const match = text.match(/👉\s*(.*)/);
-                if (match) {
-                    actualPassword = match[1].trim();
-                } else if (lines.length > 1) {
-                    actualPassword = lines[1].trim();
-                } else {
-                    actualPassword = text.trim();
-                }
-
-                passDisplay.innerText = actualPassword;
-                copyBtn.disabled = false;
-                copyBtn.innerText = "Copy Password";
-            }
-
-            async function loadPaste(attempt = 1) {
-                const maxAttempts = 3;
-                try {
-                    const sources = await buildSources();
-                    const text = await fetchSequential(sources);
-                    applyPaste(text);
-                } catch (err) {
-                    // Retry để tránh báo nhầm "đã bị xóa" khi chỉ là lỗi mạng/proxy tạm thời
-                    if (attempt < maxAttempts) {
-                        await new Promise(r => setTimeout(r, 500 * attempt));
-                        return loadPaste(attempt + 1);
+            loadData()
+                .then(text => {
+                    const lines = text.split('\n');
+                    
+                    if (lines[0] && lines[0].trim() !== "") {
+                        titleDisplay.innerText = `Đây là pass của ${lines[0].trim()}`;
                     }
-                    console.error("Tất cả máy chủ đều không tải được", err);
+
+                    const match = text.match(/👉\s*(.*)/);
+                    if (match) {
+                        actualPassword = match[1].trim();
+                    } else if (lines.length > 1) {
+                        actualPassword = lines[1].trim();
+                    } else {
+                        actualPassword = text.trim();
+                    }
+
+                    passDisplay.innerText = actualPassword;
+                    copyBtn.disabled = false; 
+                    copyBtn.innerText = "Copy Password";
+                })
+                .catch(err => {
+                    console.error("Lỗi tải dữ liệu:", err);
                     titleDisplay.innerText = "Lỗi tải dữ liệu!";
                     passDisplay.innerText = "Sai ID hoặc Paste đã bị xóa.";
                     passDisplay.classList.add('error');
                     copyBtn.innerText = "Lỗi";
-                }
-            }
-
-            loadPaste();
+                });
         }
 
-        // Xử lý sự kiện click nút Copy (Sử dụng cách tương thích cao nhất)
         copyBtn.addEventListener('click', () => {
             if (!actualPassword) return;
 
-            // Tạo một thẻ textarea ẩn để copy (Tránh lỗi trên Iframe/Trình duyệt cũ)
             const textArea = document.createElement("textarea");
             textArea.value = actualPassword;
-            // Đặt vị trí ẩn để không làm nhảy trang web
             textArea.style.position = "fixed";
             textArea.style.top = "-9999px";
             document.body.appendChild(textArea);
@@ -262,7 +237,6 @@
             textArea.select();
 
             try {
-                // Thực thi lệnh copy
                 const successful = document.execCommand('copy');
                 if (successful) {
                     passDisplay.classList.add('unblurred');
@@ -278,7 +252,6 @@
                     throw new Error("Trình duyệt từ chối copy");
                 }
             } catch (err) {
-                // Xử lý lỗi thay vì dùng alert()
                 toast.innerText = "Trình duyệt chặn copy!";
                 toast.classList.add('error');
                 toast.classList.add('show');
@@ -287,7 +260,6 @@
                 }, 3000);
             }
             
-            // Xóa thẻ tạm
             document.body.removeChild(textArea);
         });
     </script>
